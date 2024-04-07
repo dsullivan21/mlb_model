@@ -1,4 +1,4 @@
-#MLB MODEL
+#TITLE: MLB MODEL
 from time import perf_counter
 import statsapi
 import json
@@ -10,6 +10,7 @@ from sklearn.tree import DecisionTreeRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.metrics import r2_score
 from sklearn import preprocessing, svm
+from sklearn.ensemble import RandomForestRegressor
 import numpy as np
 import pandas as pd
 import scipy
@@ -211,13 +212,38 @@ def getPitcherData(pitcher_id, batter_id):
 ##---------------------------##
 ##   Get batter data needed  ##
 ##---------------------------##
+## RETURNS: Batter v Pitch type, Batter v Count, Batter ABs in Game, Batter w RISP ABs ##
+
 def getBatterData(batter_id):
 
     #all player AB's in 2023
     hydrate = 'stats(group=[hitting],type=[pitchLog],season=2023,gameType=R)'
     r = statsapi.get('person',{'personId':batter_id, 'hydrate':hydrate})
 
-    
+    ## Store AB Results as game progresses ##
+    ab_results = {}
+
+    for i in range(1,6):
+        ab_results[i] = {}
+        ab_results[i]['hits'] = 0
+        ab_results[i]['outs'] = 0
+        ab_results[i]['singles'] = 0
+        ab_results[i]['doubles'] = 0
+        ab_results[i]['triples'] = 0
+        ab_results[i]['home_runs'] = 0
+        ab_results[i]['ba'] = 0
+
+    ## RISP AB Results ##
+    risp_ab = {}
+    risp_ab['hits'] =0
+    risp_ab['outs'] =0
+    risp_ab['singles'] =0
+    risp_ab['doubles'] =0
+    risp_ab['triples'] =0
+    risp_ab['home_runs'] =0
+    risp_ab['ba'] =0
+
+
     counts = {
         "0-0" : {},
         "0-1" : {},
@@ -266,15 +292,69 @@ def getBatterData(batter_id):
         pitch_types[key]['triples'] = 0
         pitch_types[key]['home_runs'] = 0
 
-    
+    ab_count = 0
+    prev_ab = 0
     for d in r['people'][0]['stats'][0]['splits']:
+        
         if "type" in d['stat']['play']['details']:
+            #print(d['stat']['play']['atBatNumber'])
+           # print(prev_ab)
+            if d['stat']['play']['atBatNumber'] > 0 and d['stat']['play']['atBatNumber'] >= prev_ab:
+                if prev_ab != d['stat']['play']['atBatNumber'] and  d['stat']['play']['atBatNumber'] > prev_ab:
+                    ab_count = ab_count + 1
+                    prev_ab = d['stat']['play']['atBatNumber']
+                print(ab_count)
+                if ab_count not in ab_results:
+                    ab_results[ab_count] = {}
+                    ab_results[ab_count]['hits'] = 0
+                    ab_results[ab_count]['outs'] = 0
+                    ab_results[ab_count]['singles'] = 0
+                    ab_results[ab_count]['doubles'] = 0
+                    ab_results[ab_count]['triples'] = 0
+                    ab_results[ab_count]['home_runs'] = 0
+                else:
+                    if d['stat']['play']['details']['event'] == "single":
+                        ab_results[ab_count]['hits'] +=1
+                        ab_results[ab_count]['singles'] += 1
+                    elif d['stat']['play']['details']['event'] == "double":
+                        ab_results[ab_count]['hits'] +=1
+                        ab_results[ab_count]['doubles'] += 1
+                    elif d['stat']['play']['details']['event'] == "triple":
+                        ab_results[ab_count]['hits'] +=1
+                        ab_results[ab_count]['triples'] += 1
+                    elif d['stat']['play']['details']['event'] == "home_run":
+                        ab_results[ab_count]['hits'] +=1
+                        ab_results[ab_count]['home_runs'] += 1
+                    elif d['stat']['play']['details']['event'] == "strikeout":
+                        ab_results[ab_count]['outs'] += 1
+                    elif d['stat']['play']['details']['isInPlay'] == True:
+                        ab_results[ab_count]['outs'] += 1
+            else:
+                ab_count = 0
+                prev_ab =0
             temp = -1
             for key, value in pitch_types.items():
                 if d['stat']['play']['details']['type']['code'] == key:
                     pitch_types[key]['count'] += 1
                     temp = key
                     break
+            if d['stat']['play']['count']['runnerOn2b'] == True or d['stat']['play']['count']['runnerOn3b'] == True:
+                if d['stat']['play']['details']['event'] == "single":
+                    risp_ab['hits'] +=1
+                    risp_ab['singles'] += 1
+                elif d['stat']['play']['details']['event'] == "double":
+                    risp_ab['hits'] +=1
+                    risp_ab['doubles'] += 1
+                elif d['stat']['play']['details']['event'] == "triple":
+                    risp_ab['hits'] +=1
+                    risp_ab['triples'] += 1
+                elif d['stat']['play']['details']['event'] == "home_run":
+                    risp_ab['hits'] +=1
+                    risp_ab['home_runs'] += 1
+                elif d['stat']['play']['details']['event'] == "strikeout":
+                    risp_ab['outs'] +=1
+                elif d['stat']['play']['details']['isInPlay'] == True:
+                    risp_ab['outs'] +=1
             # Get results by pitch type
             if d['stat']['play']['details']['isInPlay'] == True:
                 if d['stat']['play']['details']['event'] == "single":
@@ -505,7 +585,19 @@ def getBatterData(batter_id):
         if hits != 0:
             counts[key]['ba'] = hits/(hits+ counts[key]['outs'])
 
-    return pitch_types, counts
+    ## Calc BA for AB's as game goes on ##
+    for key, value in ab_results.items():
+        if ab_results[key]['hits'] + ab_results[key]['outs'] != 0:
+            ab_results[key]['ba'] = ab_results[key]['hits'] / (ab_results[key]['hits'] + ab_results[key]['outs'])
+        else:
+            ab_results[key]['ba'] = 0
+    df = pd.DataFrame.from_dict(ab_results)
+   # print(df)
+
+    risp_ab['ba'] =  risp_ab['hits'] / (risp_ab['hits'] +risp_ab['outs'])
+    #print(risp_ab)
+
+    return pitch_types, counts, ab_results, risp_ab
 
 ##--------------------------------------------##
 ## start predictions from probability buckets ##
@@ -609,6 +701,9 @@ def create_buckets(count_batter, count_pitcher, pitch_types_batter):
                 #print (count_bucket[key])
 
    # print (ba_count)
+
+    getCountProjection(count_bucket)
+    sys.sleep()
     print("HIT CHANCE: ", hit_chance)
     print("TB's: ", total_bases)
 
@@ -625,6 +720,92 @@ def create_buckets(count_batter, count_pitcher, pitch_types_batter):
 #print(balls)
 #print(strikes)
 
+## Serialize Data for Projecting ##
+def getCountProjection(prob_array):
+    print (prob_array)
+    size_array = []
+    value_array = {}
+    serizalied = []
+
+    count = 0
+    for i in prob_array:
+        value_array[i] = round(prob_array[i] * 1000)
+        count = count+1
+    
+    #print(count)
+
+    #    value_array[i].append(round(prob_array[i] * 1000))
+        #value_array.append(i)
+        #value_array[i].append(prob_array[i] * 500)
+    
+    #print(value_array)
+    count = 0
+    for key, value in value_array.items():
+        for i in range(0, value):
+            serizalied.append(count)
+        count = count + 1
+    
+
+    X = np.array(range(len(serizalied))).reshape(-1, 1)
+    y = np.array(serizalied)
+
+    if len(X) <= 0 or len(y) <=0:
+        return None
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25)
+    regressor = RandomForestRegressor()
+    regressor.fit(X_train, y_train)
+    predictions = regressor.predict(X_test)
+    #clf = LinearRegression(n_jobs=-1)
+    #clf.fit(X_train, y_train)
+    #print( X_train, X_test, y_train, y_test)
+    conf = regressor.score(X_test, y_test)
+
+    print("confidence Score: ", conf)
+    
+    forecast_set = regressor.predict(X_test)
+    print("projection: ", forecast_set)
+
+    total = 0
+    print(type(forecast_set))
+    for x in forecast_set:
+        total = total + x
+
+    ## Off of prediction matrix, get average for the count projection
+    ## Total stores count projection 
+    total = round(total / len(forecast_set))
+    countToUse = ''
+    if total == 0:
+        countToUse = "0-0"
+    elif total == 1:
+        countToUse = "0-1"
+    elif total == 2:
+        countToUse = "0-2"
+    elif total == 3:
+        countToUse = "1-0"
+    elif total == 4:
+        countToUse = "1-1"
+    elif total == 5:
+        countToUse = "1-2"
+    elif total == 6:
+        countToUse = "2-0"
+    elif total == 7:
+        countToUse = "2-1"
+    elif total == 8:
+        countToUse = "2-2"
+    elif total == 9:
+        countToUse = "3-0"
+    elif total == 10:
+        countToUse = "3-1"
+    elif total == 11:
+        countToUse = "3-2"
+
+    print(countToUse)
+    print(total)
+    print (serizalied)
+    #for i in range (0,1000):
+    #    size_array[]
+
+
 ####-------------------####
 ####-------------------####
 #### --- MAIN AREA --- ####
@@ -636,7 +817,9 @@ pitcher_id = getPlayerId("Logan Webb")
 batter_id = getPlayerId("Manny Machado")
 
 count_pitcher, balls, strikes, batterVpitcher = getPitcherData(pitcher_id, batter_id)
-pitch_types, count_batter = getBatterData(batter_id)
+pitch_types, count_batter,ab_results, risp_results = getBatterData(batter_id)
+
+#serializeProbabilities(count_batter)
 
 create_buckets(count_batter, count_pitcher, pitch_types)
 

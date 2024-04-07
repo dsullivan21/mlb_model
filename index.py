@@ -1,4 +1,5 @@
 #MLB MODEL
+from time import perf_counter
 import statsapi
 import json
 from scipy import stats
@@ -11,6 +12,7 @@ from sklearn.metrics import r2_score
 from sklearn import preprocessing, svm
 import numpy as np
 import pandas as pd
+import scipy
 
 #player = statsapi.lookup_player('Devers, R')
 #print(player[0]['id']) 
@@ -36,9 +38,18 @@ mlb = mlbstatsapi.Mlb()
  #               print('      {}: {}'.format(split_stat, split_stat_value))
  #           print('\n')
 
+#----------------------------------#
+#----NOTE: GLOBAL VARIABLES -------#
+#----------------------------------#
 
-#Player v Player
+pitcher_throw_hand = ""
+batter_hand = ""
 
+
+
+##------------------##
+#Player v Player Stats
+##------------------##
 def player_v_player( pitcher_id, batter_id):
     #shohei_ohtani_id = mlb.get_people_id('Shohei Ohtani')[0]
     #ty_france_id = mlb.get_people_id('Ty France')[0]
@@ -54,10 +65,16 @@ def player_v_player( pitcher_id, batter_id):
             print(k, v)
            # print (vs_player_total)
 
-
+##---------------------------##
+### Gets player Id from name ##
+##---------------------------##
 def getPlayerId(player_name):
     player_id = mlb.get_people_id(player_name)[0]
     return player_id
+
+##---------------------------##
+##  Get pitcher data needed  ##
+##---------------------------##
 
 def getPitcherData(pitcher_id, batter_id): 
 
@@ -191,7 +208,9 @@ def getPitcherData(pitcher_id, batter_id):
    # print(batterVpitcher)
     return counts, balls, strikes, batterVpitcher
 
-
+##---------------------------##
+##   Get batter data needed  ##
+##---------------------------##
 def getBatterData(batter_id):
 
     #all player AB's in 2023
@@ -486,13 +505,13 @@ def getBatterData(batter_id):
         if hits != 0:
             counts[key]['ba'] = hits/(hits+ counts[key]['outs'])
 
-
-    pt = pd.DataFrame.from_dict(pitch_types)
-    print(pt)
-    cnt = pd.DataFrame.from_dict(counts)
-    print(cnt)
     return pitch_types, counts
 
+##--------------------------------------------##
+## start predictions from probability buckets ##
+## Non ML Prediction, all stats based ##
+## NOTE: Shooting out close to career averages for players v that pitcher 
+##---------------------------------------------##
 
 def create_buckets(count_batter, count_pitcher, pitch_types_batter):
     ### Working
@@ -500,11 +519,20 @@ def create_buckets(count_batter, count_pitcher, pitch_types_batter):
     total = 0
     buckets = {} 
     count = 0
+     ##Normalize buckets to make prediction 
+    prev = 0
+    ticker = 0
     for key,value in count_batter.items():
         total = total + count_batter[key]['result_in_count']
         count_bucket[key] = 0
         buckets[key] = 0
+      #  if ticker == 0:
         buckets[key] = count_batter[key]['result_in_count']
+       # else:
+       #     buckets[key] = count_batter[key]['result_in_count'] + prev
+      #  prev = buckets[key]
+     #   ticker = ticker + 1
+        count_bucket[key] =  count_batter[key]['result_in_count']
 
     sum1 = 0
     for key,value in count_batter.items():
@@ -512,10 +540,88 @@ def create_buckets(count_batter, count_pitcher, pitch_types_batter):
         sum1 = sum1+ (count_batter[key]['result_in_count']/total)
         count = count + buckets[key]
 
-        
-    cb = pd.DataFrame.from_dict([count_bucket])
+    perc_bucket = pd.DataFrame.from_dict([count_bucket])
+    cb = pd.DataFrame.from_dict([buckets])
+
+    print(perc_bucket)
+
+    #mu, std = scipy.stats.norm.fit(cb)
+
+    # generate data for var_2
+   # var_2 = np.random.normal(mu, std, size=len(cb))
+
+   # print (var_2)
+
+    #get % of pitch thrown in each count 
+    pithcer_data = {}
+    for key, val in count_pitcher.items():
+        pithcer_data[key] = {}
+        total = 0
+        for key2, val2 in count_pitcher[key].items():
+           # print(key2)
+            if key2 != 'total':
+                pithcer_data[key][key2] = 0
+                total = count_pitcher[key]['total']
+                pithcer_data[key][key2] = count_pitcher[key][key2]/count_pitcher[key]['total']
+
+
+
+    pitcherData = pd.DataFrame.from_dict(pithcer_data)
+    #print(pitcherData)
+
+    hit_chance = 0
+    ba_in_count = {}
+    for key, val in pitch_types_batter.items():
+        for key2, val2 in pithcer_data.items():
+           # print (key2)
+            if key2 not in ba_in_count:
+                ba_in_count[key2] = 0
+            for key3, val3 in pithcer_data[key2].items():
+               # print(key2)
+                if key3 == key:
+            #        print( "BATTER: ", pitch_types_batter[key]['ba'])
+            #        print("PITCHER: ", pithcer_data[key2][key])
+                    ba_in_count[key2] = ba_in_count[key2]+ pitch_types_batter[key]['ba'] * pithcer_data[key2][key]
+             #       print("COMBO: ", pitch_types_batter[key]['ba'] * pithcer_data[key2][key])
+                    
+
+    #print(ba_in_count)
+
+    #ba_count = pd.DataFrame.from_dict(ba_in_count)
+
+    total_bases =0
+    for key, value in ba_in_count.items():
+        hits_in_count = 0
+        for key2,value2 in count_bucket.items():
+            if key == key2:
+                hit_chance = hit_chance + (count_bucket[key] * ba_in_count[key])
+                #count_bucket[key]
+              #  print(count_bucket[key] * ba_in_count[key])
+                hits_in_count = count_batter[key]['singles'] + count_batter[key]['doubles'] +count_batter[key]['triples']+count_batter[key]['home_runs']
+                if count_batter[key]['result_in_count'] != 0 and hits_in_count != 0:
+                    single_chance = ((count_batter[key]['singles']/hits_in_count) * (count_bucket[key] * ba_in_count[key]))
+                    double_chance = ((count_batter[key]['doubles']/hits_in_count) * (count_bucket[key] * ba_in_count[key]))*2
+                    triple_chance = ((count_batter[key]['triples']/hits_in_count) * (count_bucket[key] * ba_in_count[key]))*3
+                    hr_chance = ((count_batter[key]['home_runs']/hits_in_count) * (count_bucket[key] * ba_in_count[key]))*4
+                    total_bases = total_bases + single_chance + double_chance +triple_chance+ hr_chance
+                else: 
+                     total_bases = total_bases + 0
+                #print (count_bucket[key])
+
+   # print (ba_count)
+    print("HIT CHANCE: ", hit_chance)
+    print("TB's: ", total_bases)
+
+    count_p = pd.DataFrame.from_dict(count_batter)
+    print("Machado by Count: \n", count_p)
+    pitch_types_b = pd.DataFrame.from_dict(pitch_types_batter)
+    print("Machado by Pitch Type: \n", pitch_types_b)
+
+    count_pitch = pd.DataFrame.from_dict(count_pitcher)
+    print("Webb Pitch Type by count: \n", count_pitch)
+   # print(pitch_types_b)
     #print(count)
-    print(cb)
+   # print(cb)
 #print(balls)
 #print(strikes)
 
@@ -525,9 +631,9 @@ def create_buckets(count_batter, count_pitcher, pitch_types_batter):
 ####-------------------####
 ####-------------------####
 
-pitcher_id = getPlayerId("Garrett Whitlock")
+pitcher_id = getPlayerId("Logan Webb")
 #print(pitcher_id)
-batter_id = getPlayerId("Mike Trout")
+batter_id = getPlayerId("Manny Machado")
 
 count_pitcher, balls, strikes, batterVpitcher = getPitcherData(pitcher_id, batter_id)
 pitch_types, count_batter = getBatterData(batter_id)

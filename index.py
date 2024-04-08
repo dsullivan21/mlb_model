@@ -1,5 +1,6 @@
 #TITLE: MLB MODEL
 from time import perf_counter
+from turtle import home
 import statsapi
 import json
 from scipy import stats
@@ -46,6 +47,7 @@ mlb = mlbstatsapi.Mlb()
 pitcher_throw_hand = ""
 batter_hand = ""
 
+all_batter_projs = {}
 
 
 ##------------------##
@@ -223,7 +225,7 @@ def getBatterData(batter_id):
     ## Store AB Results as game progresses ##
     ab_results = {}
 
-    for i in range(1,6):
+    for i in range(1,5):
         ab_results[i] = {}
         ab_results[i]['hits'] = 0
         ab_results[i]['outs'] = 0
@@ -303,7 +305,7 @@ def getBatterData(batter_id):
                 if prev_ab != d['stat']['play']['atBatNumber'] and  d['stat']['play']['atBatNumber'] > prev_ab:
                     ab_count = ab_count + 1
                     prev_ab = d['stat']['play']['atBatNumber']
-                print(ab_count)
+               # print(ab_count)
                 if ab_count not in ab_results:
                     ab_results[ab_count] = {}
                     ab_results[ab_count]['hits'] = 0
@@ -603,14 +605,20 @@ def getBatterData(batter_id):
 ## start predictions from probability buckets ##
 ## Non ML Prediction, all stats based ##
 ## NOTE: Shooting out close to career averages for players v that pitcher 
+##
+## TODO: RISP odds for AB
+## TODO: Bullpen v Batter
+##
 ##---------------------------------------------##
 
-def create_buckets(count_batter, count_pitcher, pitch_types_batter):
+def create_buckets(count_batter, count_pitcher, pitch_types_batter, ab_results):
     ### Working
     count_bucket = {}
     total = 0
     buckets = {} 
     count = 0
+
+    print(ab_results)
      ##Normalize buckets to make prediction 
     prev = 0
     ticker = 0
@@ -618,12 +626,7 @@ def create_buckets(count_batter, count_pitcher, pitch_types_batter):
         total = total + count_batter[key]['result_in_count']
         count_bucket[key] = 0
         buckets[key] = 0
-      #  if ticker == 0:
         buckets[key] = count_batter[key]['result_in_count']
-       # else:
-       #     buckets[key] = count_batter[key]['result_in_count'] + prev
-      #  prev = buckets[key]
-     #   ticker = ticker + 1
         count_bucket[key] =  count_batter[key]['result_in_count']
 
     sum1 = 0
@@ -632,17 +635,10 @@ def create_buckets(count_batter, count_pitcher, pitch_types_batter):
         sum1 = sum1+ (count_batter[key]['result_in_count']/total)
         count = count + buckets[key]
 
-    perc_bucket = pd.DataFrame.from_dict([count_bucket])
-    cb = pd.DataFrame.from_dict([buckets])
+    # DFs for testing visuals #
+   # perc_bucket = pd.DataFrame.from_dict([count_bucket])
+    # cb = pd.DataFrame.from_dict([buckets])
 
-    print(perc_bucket)
-
-    #mu, std = scipy.stats.norm.fit(cb)
-
-    # generate data for var_2
-   # var_2 = np.random.normal(mu, std, size=len(cb))
-
-   # print (var_2)
 
     #get % of pitch thrown in each count 
     pithcer_data = {}
@@ -675,12 +671,9 @@ def create_buckets(count_batter, count_pitcher, pitch_types_batter):
             #        print("PITCHER: ", pithcer_data[key2][key])
                     ba_in_count[key2] = ba_in_count[key2]+ pitch_types_batter[key]['ba'] * pithcer_data[key2][key]
              #       print("COMBO: ", pitch_types_batter[key]['ba'] * pithcer_data[key2][key])
-                    
+                
 
-    #print(ba_in_count)
-
-    #ba_count = pd.DataFrame.from_dict(ba_in_count)
-
+    # Total bases projection from straight data #
     total_bases =0
     for key, value in ba_in_count.items():
         hits_in_count = 0
@@ -702,23 +695,148 @@ def create_buckets(count_batter, count_pitcher, pitch_types_batter):
 
    # print (ba_count)
 
-    getCountProjection(count_bucket)
-    sys.sleep()
-    print("HIT CHANCE: ", hit_chance)
-    print("TB's: ", total_bases)
+    ## -- AB's as Game Progressess -- ##
 
-    count_p = pd.DataFrame.from_dict(count_batter)
-    print("Machado by Count: \n", count_p)
-    pitch_types_b = pd.DataFrame.from_dict(pitch_types_batter)
-    print("Machado by Pitch Type: \n", pitch_types_b)
+    ## - get a projection of ending count - ##
 
-    count_pitch = pd.DataFrame.from_dict(count_pitcher)
-    print("Webb Pitch Type by count: \n", count_pitch)
+    ## - Model 4 ABs - ## 
+    totalBasesProjected = 0
+    ab_projected_data = {}
+    ab_projected_data['singles'] = 0
+    ab_projected_data['doubles'] = 0
+    ab_projected_data['triples'] = 0
+    ab_projected_data['home_runs'] = 0
+
+    for i in range (1,4):
+        projected_count = getCountProjection(count_bucket)
+
+    ## - get projected result - #
+        proj_tb_outcome, ab_proj_chances = projectResult(count_batter[projected_count])
+
+        ab_projected_data['singles'] = ab_projected_data['singles'] + ab_proj_chances['singles']
+        ab_projected_data['doubles'] = ab_projected_data['doubles'] + ab_proj_chances['doubles']
+        ab_projected_data['triples'] = ab_projected_data['triples'] + ab_proj_chances['triples']
+        ab_projected_data['home_runs'] = ab_projected_data['home_runs'] + ab_proj_chances['home_runs']
+
+        totalBasesProjected = totalBasesProjected + proj_tb_outcome
+
+
+    print("Total Bases Proj: ", totalBasesProjected)
+    print("Results Proj: ", ab_projected_data)
+
+    
+    print(count_batter[projected_count])
+
+    return totalBasesProjected, ab_projected_data
+
+    #print("HIT CHANCE: ", hit_chance)
+    #print("TB's: ", total_bases)
+
+    #count_p = pd.DataFrame.from_dict(count_batter)
+    #print("Machado by Count: \n", count_p)
+    #pitch_types_b = pd.DataFrame.from_dict(pitch_types_batter)
+    #print("Machado by Pitch Type: \n", pitch_types_b)
+
+    #count_pitch = pd.DataFrame.from_dict(count_pitcher)
+    #print("Webb Pitch Type by count: \n", count_pitch)
    # print(pitch_types_b)
     #print(count)
    # print(cb)
 #print(balls)
 #print(strikes)
+
+
+# -- Project an AB result -- #
+# -- Returns AB Projection -- #
+def projectResult(data):
+
+    serizalied = []
+    values = {}
+
+   ## -- Make sample size larger for better projection
+    for key, value in data.items():
+        if key == "singles":
+            for i in range(0,value*10):
+                serizalied.append(1)
+        elif key == "doubles":
+            for i in range(0, value*10):
+                serizalied.append(2)
+        elif key == "triples":
+            for i in range(0,value*10):
+                serizalied.append(3)
+        elif key == "home_runs":
+            for i in range(0,value*10):
+                serizalied.append(4)
+        elif key == "outs":
+            for i in range(0,value*10):
+                serizalied.append(0)
+    
+    print(serizalied) 
+
+
+    X = np.array(range(len(serizalied))).reshape(-1, 1)
+    y = np.array(serizalied)
+
+    if len(X) <= 0 or len(y) <=0:
+        return None
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25)
+    regressor = RandomForestRegressor()
+    regressor.fit(X_train, y_train)
+    predictions = regressor.predict(X_test)
+    #clf = LinearRegression(n_jobs=-1)
+    #clf.fit(X_train, y_train)
+    #print( X_train, X_test, y_train, y_test)
+    conf = regressor.score(X_test, y_test)
+
+    print("confidence Score: ", conf)
+    
+    forecast_set = regressor.predict(X_test)
+    print("projection: ", forecast_set)
+
+    total = 0
+    singles = 0
+    doubles = 0
+    triples = 0
+    homeruns = 0
+    outs = 0
+    for x in forecast_set:
+        if round(x) == 1:
+            singles= singles+1
+        elif round(x) == 2:
+            doubles = doubles +1
+        elif round(x) == 3:
+            triples = triples +1
+        elif round(x) == 4:
+            homeruns = homeruns +1
+        elif round(x) == 0:
+            outs = outs + 1
+        total = total +x
+
+    ## -- aggregated projection of total bases
+    total = total/len(forecast_set)
+
+    ## -- AB projected chances data of occurances
+    ab_perc_chances = {}
+
+    homeruns = homeruns / len(forecast_set)
+    singles = singles/len(forecast_set)
+    doubles = doubles/len(forecast_set)
+    triples = triples/len(forecast_set)
+    outs = outs/len(forecast_set)
+
+    ab_perc_chances['home_runs'] = homeruns
+    ab_perc_chances['singles'] = singles
+    ab_perc_chances['doubles'] = doubles
+    ab_perc_chances['triples'] = triples
+    ab_perc_chances['outs'] = outs
+
+
+    print(total)
+    print(ab_perc_chances)
+   # print(data)
+
+    return total, ab_perc_chances
+
 
 ## Serialize Data for Projecting ##
 def getCountProjection(prob_array):
@@ -766,7 +884,7 @@ def getCountProjection(prob_array):
     print("projection: ", forecast_set)
 
     total = 0
-    print(type(forecast_set))
+    #print(type(forecast_set))
     for x in forecast_set:
         total = total + x
 
@@ -802,6 +920,8 @@ def getCountProjection(prob_array):
     print(countToUse)
     print(total)
     print (serizalied)
+
+    return countToUse
     #for i in range (0,1000):
     #    size_array[]
 
@@ -812,18 +932,48 @@ def getCountProjection(prob_array):
 ####-------------------####
 ####-------------------####
 
-pitcher_id = getPlayerId("Logan Webb")
-#print(pitcher_id)
-batter_id = getPlayerId("Manny Machado")
+def main():
 
-count_pitcher, balls, strikes, batterVpitcher = getPitcherData(pitcher_id, batter_id)
-pitch_types, count_batter,ab_results, risp_results = getBatterData(batter_id)
+
+    with open('lineup.json') as json_file:
+        lineups = json.load(json_file)
+
+    print(lineups)
+    for player in lineups:
+        
+        all_batter_projs[player] = {}
+        all_batter_projs[player]['total_bases'] = 0
+        all_batter_projs[player]['singles'] = 0
+        all_batter_projs[player]['doubles'] = 0
+        all_batter_projs[player]['triples'] = 0
+        all_batter_projs[player]['home_runs'] = 0
+
+        pitcher_id = getPlayerId("Luis Castillo")
+        #print(pitcher_id)
+        batter_id = getPlayerId(player)
+
+        count_pitcher, balls, strikes, batterVpitcher = getPitcherData(pitcher_id, batter_id)
+        pitch_types, count_batter,ab_results, risp_results = getBatterData(batter_id)
 
 #serializeProbabilities(count_batter)
 
-create_buckets(count_batter, count_pitcher, pitch_types)
+        tb, res = create_buckets(count_batter, count_pitcher, pitch_types, ab_results)
+
+        print(tb)
+        all_batter_projs[player]['singles'] = res['singles'] 
+        all_batter_projs[player]['doubles'] = res['doubles']
+        all_batter_projs[player]['triples'] = res['triples']
+        all_batter_projs[player]['home_runs'] = res['home_runs']
+        all_batter_projs[player]['total_bases'] = tb
+
+        
+main()
+df = pd.DataFrame.from_dict(all_batter_projs)
+print(df)
 
 
+#pitcher_id = getPlayerId("James Paxton")
+#batter_id = getPlayerId("Byron Buxton")
 #player_v_player(pitcher_id, batter_id)
 
 

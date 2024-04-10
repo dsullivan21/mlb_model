@@ -1,5 +1,6 @@
 # MLB MODEL 
 
+
 - find pitcher v batter matchups
 - Batter hot/cold zones vs pitcher pitch area frequency 
 - Historical data 

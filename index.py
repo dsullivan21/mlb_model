@@ -61,13 +61,17 @@ def player_v_player( pitcher_id, batter_id):
     group = ['hitting']
     params = {'opposingPlayerId': pitcher_id, 'season': 2022}
 
+    pvp_obj = {}
+
     stats = mlb.get_player_stats(batter_id, stats=stats, groups=group, **params)
     vs_player_total = stats['hitting']['vsplayertotal']
     for split in vs_player_total.splits:
         for k, v in split.stat.__dict__.items():
-            print(k, v)
-           # print (vs_player_total)
+            pvp_obj[k] = 0
+            pvp_obj[k] = v
 
+           # 
+    return pvp_obj
 ##---------------------------##
 ### Gets player Id from name ##
 ##---------------------------##
@@ -211,6 +215,64 @@ def getPitcherData(pitcher_id, batter_id):
    # print(batterVpitcher)
     return counts, balls, strikes, batterVpitcher
 
+##-------------------------------##
+## Get Batter Game Log data -----##
+##- Returns: object of L10 Data -##
+##-------------------------------##
+def getBatterRecentGames(batter_id):
+    ## Get recent games stats ##
+    #player_id = mlb.get_people_id(batter_name)[0]
+    hydrate = 'stats(group=[hitting],type=[gameLog])'
+    r = statsapi.get('person',{'personId':batter_id, 'hydrate':hydrate})
+    r = r['people'][0]['stats'][0]['splits']
+
+    #Init data storage
+    last_ten_data = {}
+    last_ten_data['atBats'] = 0
+    last_ten_data['hits'] = 0
+    last_ten_data['doubles'] = 0
+    last_ten_data['home_runs'] = 0
+    last_ten_data['triples'] = 0
+    last_ten_data['totalBases'] = 0
+    last_ten_data['strikeOuts'] = 0
+
+    if len(r) <= 0:
+        return None, None
+    
+   
+    ##Dont overloop if theres more than 10 games played
+    ## TODO: FIX THIS LATER
+
+    if len(r) > 10:
+        count = 0
+        for game in r:
+            
+            if 'stat' in game:
+                last_ten_data['atBats'] += game['stat']['atBats']
+                last_ten_data['hits'] += game['stat']['hits']
+                last_ten_data['doubles'] += game['stat']['doubles']
+                last_ten_data['home_runs'] +=  game['stat']['homeRuns']
+                last_ten_data['triples'] +=  game['stat']['triples']
+                last_ten_data['totalBases'] += game['stat']['totalBases']
+                last_ten_data['strikeOuts'] += game['stat']['strikeOuts']
+    else:
+        for game in r:
+            if 'stat' in game:
+                last_ten_data['atBats'] += game['stat']['atBats']
+                last_ten_data['hits'] += game['stat']['hits']
+                last_ten_data['doubles'] += game['stat']['doubles']
+                last_ten_data['home_runs'] +=  game['stat']['homeRuns']
+                last_ten_data['triples'] +=  game['stat']['triples']
+                last_ten_data['totalBases'] += game['stat']['totalBases']
+                last_ten_data['strikeOuts'] += game['stat']['strikeOuts']
+
+    last_ten_data['outs'] = last_ten_data['atBats'] - last_ten_data['hits']
+    last_ten_data['singles'] = last_ten_data['hits'] - (last_ten_data['doubles'] + last_ten_data['triples'] + last_ten_data['home_runs'])
+
+    print(last_ten_data)
+
+    return last_ten_data
+
 ##---------------------------##
 ##   Get batter data needed  ##
 ##---------------------------##
@@ -244,6 +306,26 @@ def getBatterData(batter_id):
     risp_ab['triples'] =0
     risp_ab['home_runs'] =0
     risp_ab['ba'] =0
+
+    ## Day/Night Storage Init##
+
+    day_night_ABs = {}
+    day_night_ABs['day'] = {}
+    day_night_ABs['night'] = {}
+    day_night_ABs['day']['hits'] = 0
+    day_night_ABs['day']['outs'] = 0
+    day_night_ABs['day']['singles'] = 0
+    day_night_ABs['day']['doubles'] = 0
+    day_night_ABs['day']['triples'] = 0
+    day_night_ABs['day']['home_runs'] = 0
+    day_night_ABs['day']['ba'] = 0
+    day_night_ABs['night']['hits'] = 0
+    day_night_ABs['night']['outs'] = 0
+    day_night_ABs['night']['singles'] = 0
+    day_night_ABs['night']['doubles'] = 0
+    day_night_ABs['night']['triples'] = 0
+    day_night_ABs['night']['home_runs'] = 0
+    day_night_ABs['night']['ba'] = 0
 
 
     counts = {
@@ -608,10 +690,11 @@ def getBatterData(batter_id):
 ##
 ## TODO: RISP odds for AB
 ## TODO: Bullpen v Batter
+## TODO: Store strikeout chances for pitcher strikeout proj
 ##
 ##---------------------------------------------##
 
-def create_buckets(count_batter, count_pitcher, pitch_types_batter, ab_results):
+def create_buckets(count_batter, count_pitcher, pitch_types_batter, ab_results, pvp, l10_batter):
     ### Working
     count_bucket = {}
     total = 0
@@ -707,19 +790,78 @@ def create_buckets(count_batter, count_pitcher, pitch_types_batter, ab_results):
     ab_projected_data['triples'] = 0
     ab_projected_data['home_runs'] = 0
 
+    ## check if Player v Pitcher returned data
+    ## get needed info from pvp
+    pvp_arr = {}
+    if pvp:
+        outs = pvp['groundouts'] + pvp['airouts'] + pvp['strikeouts']
+        doubles = pvp['doubles']
+        singles = pvp['hits'] - (pvp['doubles'] + pvp['triples'] + pvp['homeruns'])
+        homers = pvp['homeruns']
+        triples = pvp['triples']
+    
+        pvp_arr['outs'] = outs
+        pvp_arr['singles'] = singles
+        pvp_arr['doubles'] = doubles
+        pvp_arr['triples'] = triples
+        pvp_arr['home_runs'] = homers
+
+    
     for i in range (1,4):
         projected_count = getCountProjection(count_bucket)
+
+        ## project on last 10 streak from batter ##
+        l10_tb, l10_obj = projectResult(l10_batter)
+
+        #First AB of Game Projection
+        if i == 1:
+            proj_by_ab, chance_by_ab = projectResult(ab_results[i])
+            print(proj_by_ab, chance_by_ab)
+        
+        elif i == 2:
+            proj_by_ab, chance_by_ab = projectResult(ab_results[i])
+            print(proj_by_ab, chance_by_ab)
+        elif i == 3:
+            proj_by_ab, chance_by_ab = projectResult(ab_results[i])
+            print(proj_by_ab, chance_by_ab)
+        elif i == 4:
+            proj_by_ab, chance_by_ab = projectResult(ab_results[i])
+            print(proj_by_ab, chance_by_ab)
 
     ## - get projected result - #
         proj_tb_outcome, ab_proj_chances = projectResult(count_batter[projected_count])
 
-        ab_projected_data['singles'] = ab_projected_data['singles'] + ab_proj_chances['singles']
-        ab_projected_data['doubles'] = ab_projected_data['doubles'] + ab_proj_chances['doubles']
-        ab_projected_data['triples'] = ab_projected_data['triples'] + ab_proj_chances['triples']
-        ab_projected_data['home_runs'] = ab_projected_data['home_runs'] + ab_proj_chances['home_runs']
+        ## TODO: find a better way to project how many ABs v Starting Pitcher
+        ## -----------------------------------------------
+        ## TODO: Create AI to choose weights vs Manual 
+        ## -----------------------------------------------
 
-        totalBasesProjected = totalBasesProjected + proj_tb_outcome
+        if pvp_arr and l10_obj != None:
+            pvp_tb, pvp_ab_proj = projectResult(pvp_arr)
+            #print(pvp_tb, pvp_ab_proj)
+            ab_projected_data['singles'] = ab_projected_data['singles'] + (ab_proj_chances['singles']*0.4 + chance_by_ab['singles']*0.2 + pvp_ab_proj['singles']*0.2 + l10_obj['singles']* 0.2)
+            ab_projected_data['doubles'] = ab_projected_data['doubles'] + (ab_proj_chances['doubles']*0.4 + chance_by_ab['doubles']*0.2  + pvp_ab_proj['doubles']*0.2+ l10_obj['doubles']* 0.2)
+            ab_projected_data['triples'] = ab_projected_data['triples'] + (ab_proj_chances['triples']*0.4 + chance_by_ab['triples']*0.2 + pvp_ab_proj['triples']*0.2+ l10_obj['triples']* 0.2)
+            ab_projected_data['home_runs'] = ab_projected_data['home_runs'] + (ab_proj_chances['home_runs']*0.4 + chance_by_ab['home_runs']*0.2 + pvp_ab_proj['home_runs']*0.2 + l10_obj['home_runs']* 0.2)
 
+            totalBasesProjected = totalBasesProjected + (proj_tb_outcome*0.4 + proj_by_ab * 0.2 + pvp_tb*0.2 +l10_tb*0.2)
+
+            
+        elif l10_obj != None:
+            ab_projected_data['singles'] = ab_projected_data['singles'] + (ab_proj_chances['singles']*0.4 + chance_by_ab['singles']*0.3 + l10_obj['singles']* 0.3)
+            ab_projected_data['doubles'] = ab_projected_data['doubles'] + (ab_proj_chances['doubles']*0.4 + chance_by_ab['doubles']*0.3 + l10_obj['doubles']* 0.3)
+            ab_projected_data['triples'] = ab_projected_data['triples'] + (ab_proj_chances['triples']*0.4 + chance_by_ab['triples']*0.3 + l10_obj['triples']* 0.3)
+            ab_projected_data['home_runs'] = ab_projected_data['home_runs'] + (ab_proj_chances['home_runs']*0.4 + chance_by_ab['home_runs']*0.3+ l10_obj['home_runs']* 0.3)
+
+            totalBasesProjected = totalBasesProjected + (proj_tb_outcome*0.4 + proj_by_ab * 0.3+l10_tb*0.3)
+
+        else:
+            ab_projected_data['singles'] = ab_projected_data['singles'] + (ab_proj_chances['singles']*0.6 + chance_by_ab['singles']*0.4)
+            ab_projected_data['doubles'] = ab_projected_data['doubles'] + (ab_proj_chances['doubles']*0.6 + chance_by_ab['doubles']*0.4 )
+            ab_projected_data['triples'] = ab_projected_data['triples'] + (ab_proj_chances['triples']*0.6 + chance_by_ab['triples']*0.4 )
+            ab_projected_data['home_runs'] = ab_projected_data['home_runs'] + (ab_proj_chances['home_runs']*0.6 + chance_by_ab['home_runs']*0.4)
+
+            totalBasesProjected = totalBasesProjected + (proj_tb_outcome*0.6 + proj_by_ab * 0.4)
 
     print("Total Bases Proj: ", totalBasesProjected)
     print("Results Proj: ", ab_projected_data)
@@ -938,6 +1080,7 @@ def main():
     with open('lineup.json') as json_file:
         lineups = json.load(json_file)
 
+    pitcher_id = getPlayerId("Patrick Corbin")
     print(lineups)
     for player in lineups:
         
@@ -948,16 +1091,22 @@ def main():
         all_batter_projs[player]['triples'] = 0
         all_batter_projs[player]['home_runs'] = 0
 
-        pitcher_id = getPlayerId("Luis Castillo")
+        
         #print(pitcher_id)
         batter_id = getPlayerId(player)
+
+        l_10_batter = getBatterRecentGames(batter_id)
+
 
         count_pitcher, balls, strikes, batterVpitcher = getPitcherData(pitcher_id, batter_id)
         pitch_types, count_batter,ab_results, risp_results = getBatterData(batter_id)
 
+        pvp = player_v_player(pitcher_id, batter_id)
+
+
 #serializeProbabilities(count_batter)
 
-        tb, res = create_buckets(count_batter, count_pitcher, pitch_types, ab_results)
+        tb, res = create_buckets(count_batter, count_pitcher, pitch_types, ab_results, pvp, l_10_batter)
 
         print(tb)
         all_batter_projs[player]['singles'] = res['singles'] 
@@ -970,6 +1119,13 @@ def main():
 main()
 df = pd.DataFrame.from_dict(all_batter_projs)
 print(df)
+
+
+
+#print(r)
+
+
+#https://statsapi.mlb.com/api/v1/people/605151?hydrate=stats(group=[hitting,pitching,fielding],type=[gameLog])
 
 
 #pitcher_id = getPlayerId("James Paxton")
